@@ -132,7 +132,7 @@ valarg_has_param(param::P, f, idx, ptype::Type{P}=Any) where {P} =
 Generates a switch statement with `args[N] == v` where `v` ∈ `Vs` as the
 branch conditions. Each branch with value `v` calls `f(args...)`, with
 `args[idx]` replaced by `Val(v)`. If all branch conditions fail, `default_f`
-is called with with no arguments.
+is called with all the original arguments to avoid allocations from closures.
 """
 @generated function _valswitch(
     vals::Val{Vs}, idx::Val{I}, f, default_f, args::Vararg{Any,N}
@@ -143,7 +143,7 @@ is called with with no arguments.
         args = [i == I ? :(Val($v)) : :(args[$i]) for i in 1:N]
         return Expr(:call, :f, args...)
     end
-    default_expr = :(default_f())
+    default_expr = :(default_f(args...))
     return generate_switch_stmt(cond_exprs, branch_exprs, default_expr)
 end
 
@@ -181,8 +181,9 @@ function _valsplit(def::Dict{Symbol}, idx::Int, val_idxs=[idx])
     def[:body] = quote
         # Look up the parameters for the Val-typed argument in position idx
         vals = valarg_params($(esc(fname)), $types, $idx, $ptype)
-        # Default function returns the original function body
-        function default_f() $(esc(def[:body])) end
+        # Create a default function that takes the same arguments as the main function
+        # to avoid creating a closure that could lead to allocations
+        default_f($(map(esc, argnames)...)) = $(esc(def[:body]))
         # Generate a switch expression over the Val-type parameters
         return _valswitch(Val(vals), Val($idx), $(esc(fname)), default_f,
                           $(map(esc, argnames)...))
